@@ -12,18 +12,122 @@ def _():
     import polars as pl
     import plotly.express as px
     import mixology as mx
-    return (pl,)
+    return nx, pl, px
 
 
 @app.cell
 def _(pl):
-    package_metadata = pl.read_parquet("./pypi-package-metadata.parquet")
+    # Latest version for now
+    package_metadata = (
+        pl.scan_parquet("./pypi-package-metadata.parquet")
+        .filter(pl.col.upload_time == pl.col.upload_time.max().over("name"))
+        .collect()
+    )
     return (package_metadata,)
 
 
 @app.cell
-def _(package_metadata, pl):
-    package_metadata.filter(pl.col.requires.list.len() > 0)
+def _(nx, package_metadata, pl):
+    def extract_dependencies(package_metadata: pl.DataFrame) -> pl.DataFrame:
+        return package_metadata.explode("requires_dist").with_columns(
+            requires_dist=pl.col.requires_dist.str.extract(r"([\w_-]+)", 1)
+        )
+
+
+    def build_dependency_graph(dependency_graph_edges: pl.DataFrame):
+        dependency_graph = nx.DiGraph()
+
+        for name, depends_on in dependency_graph_edges.select(
+            "name", "requires_dist"
+        ).iter_rows():
+            if depends_on is None:
+                dependency_graph.add_node(name)
+            else:
+                dependency_graph.add_edge(name, depends_on)
+
+        return dependency_graph
+
+
+    dependency_graph = build_dependency_graph(
+        package_metadata.pipe(extract_dependencies)
+    )
+    required_by_graph = dependency_graph.reverse(copy=True)
+    return dependency_graph, required_by_graph
+
+
+@app.cell
+def _(dependency_graph, nx, package_metadata, pl, required_by_graph):
+    def resolve_dependency(dependency_graph: nx.DiGraph, package_name: str):
+        # Reachability search, just depth/breadth first search
+        return [v for _, v in nx.bfs_edges(dependency_graph, package_name)]
+
+
+    transitive_dependencies = package_metadata.select(
+        "name",
+        depends_on=pl.col.name.map_elements(
+            lambda x: resolve_dependency(dependency_graph, x),
+            return_dtype=pl.List(pl.String),
+        ),
+    )
+    transitive_requirements = package_metadata.select(
+        "name",
+        depends_on=pl.col.name.map_elements(
+            lambda x: resolve_dependency(required_by_graph, x),
+            return_dtype=pl.List(pl.String),
+        ),
+    )
+    return transitive_dependencies, transitive_requirements
+
+
+@app.cell(hide_code=True)
+def _(pl, px, transitive_dependencies):
+    def _():
+        plt = px.histogram(
+            transitive_dependencies.with_columns(
+                num_dependencies=pl.col.depends_on.list.len()
+            ),
+            x="num_dependencies",
+        )
+        return plt
+
+
+    _()
+    return
+
+
+@app.cell(hide_code=True)
+def _(pl, px, transitive_requirements):
+    def _():
+        plt = px.histogram(
+            transitive_requirements.with_columns(
+                num_packages_that_require=pl.col.depends_on.list.len()
+            ),
+            x="num_packages_that_require",
+        )
+        plt.update_yaxes(type='log')
+        return plt
+
+
+    _()
+    return
+
+
+@app.cell(hide_code=True)
+def _(pl, px, transitive_requirements):
+    px.bar(transitive_requirements.with_columns(
+        num_packages_that_require=pl.col.depends_on.list.len()
+    ).sort('num_packages_that_require', descending=False).tail(100),
+        x='num_packages_that_require',
+        y='name',
+        orientation='h', 
+        height=2000
+    )
+    return
+
+
+@app.cell
+def _(package_m):
+    package_m
     return
 
 
@@ -129,21 +233,22 @@ def _():
 
 @app.cell
 def _(PackageSource, package_metadata):
-    source = PackageSource()
+    def _():
+        source = PackageSource()
 
-    for package in package_metadata.iter_rows(named=True):
-        name = package["name"]
-        version = package["version"]
-        requires = package["requires_dist"] or {}
-        source.add(name, version, requires)
+        for package in package_metadata.iter_rows(named=True):
+            name = package["name"]
+            version = package["version"]
+            requires = package["requires_dist"] or {}
+            source.add(name, version, requires)
 
-    source.add("a", "1.0.0", deps={"shared": ">=2.0.0 <4.0.0"})
-    source.add("b", "1.0.0", deps={"shared": ">=3.0.0 <5.0.0"})
-    source.add("shared", "2.0.0")
-    source.add("shared", "3.0.0")
-    source.add("shared", "3.6.9")
-    source.add("shared", "4.0.0")
-    source.add("shared", "5.0.0")
+        source.add("a", "1.0.0", deps={"shared": ">=2.0.0 <4.0.0"})
+        source.add("b", "1.0.0", deps={"shared": ">=3.0.0 <5.0.0"})
+        source.add("shared", "2.0.0")
+        source.add("shared", "3.0.0")
+        source.add("shared", "3.6.9")
+        source.add("shared", "4.0.0")
+        source.add("shared", "5.0.0")
     return
 
 
