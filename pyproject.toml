@@ -1,0 +1,20 @@
+[project]
+name = "pypi-reverse-dependencies"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "basedpyright>=1.31.5",
+  "google-cloud-bigquery>=3.38.0",
+  "google-cloud-bigquery-storage>=2.33.1",
+  "google-cloud-storage>=3.4.0",
+  "marimo[lsp,mcp,recommended,sql]>=0.16.2",
+  "mixology>=0.2.0",
+  "networkx>=3.5",
+  "plotly[express]>=6.3.0",
+  "poetry-semver>=0.1.0",
+  "polars[fsspec,pyarrow]>=1.33.1",
+  "ty>=0.0.1a21",
+  "typer>=0.17.4",
+]
